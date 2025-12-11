@@ -16,7 +16,7 @@ import io
 # =========================================================
 # 1. CONFIGURAÇÕES E SETUP
 # =========================================================
-st.set_page_config(page_title="Salog Express", page_icon="🚛", layout="centered")
+st.set_page_config(page_title="Salog Enfio de NF", page_icon="🚛", layout="centered")
 
 # Configuração Tesseract (Windows vs Linux/Cloud)
 if platform.system() == "Windows":
