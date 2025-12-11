@@ -16,28 +16,24 @@ import io
 # =========================================================
 # 1. CONFIGURAÇÕES E SETUP
 # =========================================================
-st.set_page_config(page_title="Salog Enfio de NF", page_icon="🚛", layout="centered")
+st.set_page_config(page_title="Salog Express", page_icon="🚛", layout="centered")
 
-# Configuração Tesseract (Windows vs Linux/Cloud)
 if platform.system() == "Windows":
     caminho_tesseract = r"C:\Users\eduardo.costa\Tesseract-OCR\tesseract.exe"
     try: pytesseract.pytesseract.tesseract_cmd = caminho_tesseract
     except: pass
 
-# =========================================================
-# 2. SEGURANÇA DE E-MAILS
-# =========================================================
-# Tenta pegar dos segredos da nuvem ou local
 try:
     SEU_EMAIL = st.secrets["email_remetente"]
     SUA_SENHA = st.secrets["senha_email"]
     EMAIL_FATURAMENTO = st.secrets["email_destino"]
-except FileNotFoundError:
-    st.error("Erro: Segredos não configurados. Configure no Streamlit Cloud.")
-    st.stop()
+except:
+    SEU_EMAIL = "eduardo.costa.eh25@gmail.com"
+    SUA_SENHA = "gerr ouyx atjs ijps" 
+    EMAIL_FATURAMENTO = "eduardo.costa@salog.com.br"
 
 # =========================================================
-# 2. FUNÇÕES DO SISTEMA (OCR E EMAIL)
+# 2. FUNÇÕES DO SISTEMA
 # =========================================================
 def processar_imagem(img):
     # 1. Tenta Código de Barras
@@ -71,7 +67,6 @@ def processar_imagem(img):
     return None, None
 
 def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
-    # Recupera os dados organizados
     usuario_envio = dados_viagem['usuario']
     motorista = dados_viagem['mot']
     pv = dados_viagem['pv']
@@ -84,7 +79,6 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
     msg['From'] = SEU_EMAIL
     msg['To'] = EMAIL_FATURAMENTO
     
-    # Monta o corpo do e-mail
     corpo = f"""
     ENTREGA DE NOTAS - APP LOGÍSTICA
     ================================
@@ -108,7 +102,6 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
     """
     msg.attach(MIMEText(corpo, 'plain'))
     
-    # Anexa as fotos
     for i, item in enumerate(lista_notas):
         try:
             img_byte_arr = io.BytesIO()
@@ -133,7 +126,7 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
         return False
 
 # =========================================================
-# 3. APLICAÇÃO PRINCIPAL (SEM LOGIN)
+# 3. APLICAÇÃO PRINCIPAL
 # =========================================================
 
 st.title("🚛 Salog Express Web")
@@ -145,91 +138,75 @@ if 'notas_processadas' not in st.session_state: st.session_state.notas_processad
 if st.session_state.etapa == 'dados':
     st.info("Preencha os dados da viagem.")
     
-    # CAMPO 1: QUEM ESTÁ ENVIANDO (OBRIGATÓRIO)
     usuario_envio = st.text_input("👤 Quem está enviando? (Seu Nome) *", placeholder="Ex: Eduardo Costa")
-    
     st.markdown("---")
     
     c1, c2 = st.columns(2)
-    mot = c1.text_input("Motorista *", placeholder="Nome do Motorista")
+    mot = c1.text_input("Motorista *", placeholder="Nome")
     pv = c2.text_input("PV *", placeholder="Número PV")
     
     c3, c4 = st.columns(2)
     orig = c3.text_input("Origem", placeholder="Cidade Coleta")
     dest = c4.text_input("Destino", placeholder="Cidade Entrega")
     
-    # CAMPO OBS (OPCIONAL)
-    obs = st.text_area("📝 Observações (Opcional)", placeholder="Ex: Nota com rasura, vidro quebrado, falta canhoto...")
+    obs = st.text_area("📝 Observações (Opcional)", placeholder="Ex: Avaria, falta canhoto...")
     
     if st.button("Continuar ➡️", type="primary"):
-        # Validação: Usuário, Motorista e PV são cruciais
         if usuario_envio and mot and pv:
             st.session_state.dados = {
-                'usuario': usuario_envio,
-                'mot': mot, 
-                'pv': pv, 
-                'orig': orig, 
-                'dest': dest,
-                'obs': obs
+                'usuario': usuario_envio, 'mot': mot, 'pv': pv, 
+                'orig': orig, 'dest': dest, 'obs': obs
             }
             st.session_state.etapa = 'fotos'
             st.rerun()
         else:
-            st.error("⚠️ Faltando: Seu Nome, Motorista ou PV.")
+            st.error("⚠️ Preencha: Seu Nome, Motorista e PV.")
 
-# --- ETAPA 2: FOTOS ---
+# --- ETAPA 2: FOTOS (INTERFACE UNIFICADA) ---
 elif st.session_state.etapa == 'fotos':
     d = st.session_state.dados
     st.caption(f"Enviado por: {d['usuario']} | PV: {d['pv']}")
     
+    # Lista do que já foi processado
     qtd = len(st.session_state.notas_processadas)
     if qtd > 0:
         st.success(f"✅ {qtd} notas na cesta")
-        with st.expander("Ver lista"):
+        with st.expander("Ver lista processada"):
             for n in st.session_state.notas_processadas:
                 status = n['nf'] if n['nf'] != "MANUAL" else "⚠️ ANÁLISE HUMANA"
                 st.text(f"- {status}")
     
     st.markdown("---")
-    st.subheader("📸 Nova Nota")
     
-    foto = st.camera_input("Tirar Foto")
+    # A MUDANÇA ESTÁ AQUI: Interface limpa
+    st.subheader("📸 Adicionar Notas")
+    st.info("No celular, ao clicar abaixo, você pode escolher **Câmera** ou **Galeria**.")
     
-    if foto:
-        col_verif, col_forcar = st.columns(2)
-        with col_verif:
-            if st.button("🔍 Verificar", type="primary"):
-                with st.spinner("Lendo..."):
-                    img_pil = Image.open(foto)
-                    chave, nf = processar_imagem(img_pil)
-                    if chave:
-                        st.session_state.notas_processadas.append({'chave': chave, 'nf': nf, 'img': img_pil})
-                        st.toast(f"NF {nf} lida!", icon="✅")
-                        st.rerun()
-                    else:
-                        st.error("❌ Não leu.")
-                        st.session_state.falha_leitura = True
-        
-        if 'falha_leitura' in st.session_state:
-            if st.button("⚠️ Anexar para Análise Humana"):
-                img_pil = Image.open(foto)
-                st.session_state.notas_processadas.append({'chave': "FALHA LEITURA", 'nf': "MANUAL", 'img': img_pil})
-                del st.session_state['falha_leitura']
+    uploads = st.file_uploader(
+        "Tirar fotos ou Selecionar arquivos", 
+        type=['jpg', 'png', 'jpeg'],
+        accept_multiple_files=True,
+        label_visibility="collapsed" # Esconde o rótulo para ficar mais limpo
+    )
+    
+    if uploads:
+        if st.button("🔍 Processar Arquivos Selecionados", type="primary"):
+            novos = 0
+            for u in uploads:
+                img_u = Image.open(u)
+                chave_u, nf_u = processar_imagem(img_u)
+                if chave_u:
+                    st.session_state.notas_processadas.append({'chave': chave_u, 'nf': nf_u, 'img': img_u})
+                    novos += 1
+                else:
+                    # Se não leu, já manda para Análise Humana direto (Plano B automático)
+                    st.session_state.notas_processadas.append({'chave': "VER ANEXO", 'nf': "MANUAL", 'img': img_u})
+                    novos += 1
+            
+            if novos > 0:
+                st.success(f"{novos} novas imagens processadas!")
                 st.rerun()
 
-    with st.expander("📂 Upload da Galeria"):
-        uploads = st.file_uploader("Arquivos", accept_multiple_files=True)
-        if uploads:
-            if st.button("Processar Arquivos"):
-                for u in uploads:
-                    img_u = Image.open(u)
-                    chave_u, nf_u = processar_imagem(img_u)
-                    if chave_u:
-                        st.session_state.notas_processadas.append({'chave': chave_u, 'nf': nf_u, 'img': img_u})
-                    else:
-                        st.session_state.notas_processadas.append({'chave': "VER ANEXO", 'nf': "MANUAL", 'img': img_u})
-                st.rerun()
-    
     st.markdown("---")
     c_v, c_a = st.columns(2)
     if c_v.button("⬅️ Voltar"):
@@ -239,11 +216,12 @@ elif st.session_state.etapa == 'fotos':
         if qtd > 0:
             st.session_state.etapa = 'envio'
             st.rerun()
-        else: st.error("Adicione nota.")
+        else: st.error("Adicione pelo menos uma nota.")
 
 # --- ETAPA 3: ENVIO ---
 elif st.session_state.etapa == 'envio':
     st.subheader("🚀 Conferência Final")
+    
     texto = ""
     for item in st.session_state.notas_processadas:
         icone = "✅" if item['nf'] != "MANUAL" else "⚠️"
