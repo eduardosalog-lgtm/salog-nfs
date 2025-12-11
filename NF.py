@@ -24,16 +24,17 @@ if platform.system() == "Windows":
     try: pytesseract.pytesseract.tesseract_cmd = caminho_tesseract
     except: pass
 
-# Carregar Segredos de E-mail
+# =========================================================
+# 2. SEGURANÇA DE E-MAILS
+# =========================================================
+# Tenta pegar dos segredos da nuvem ou local
 try:
     SEU_EMAIL = st.secrets["email_remetente"]
     SUA_SENHA = st.secrets["senha_email"]
     EMAIL_FATURAMENTO = st.secrets["email_destino"]
-except:
-    # Fallback para teste local
-    SEU_EMAIL = "eduardo.costa@salog.com.br"
-    SUA_SENHA = "gerr ouyx atjs ijps" 
-    EMAIL_FATURAMENTO = "eduardo.costa@salog.com.br"
+except FileNotFoundError:
+    st.error("Erro: Segredos não configurados. Configure no Streamlit Cloud.")
+    st.stop()
 
 # =========================================================
 # 2. FUNÇÕES DO SISTEMA (OCR E EMAIL)
