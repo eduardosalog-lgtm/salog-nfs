@@ -16,11 +16,10 @@ import io
 # =========================================================
 # 1. CONFIGURAÇÕES E SETUP
 # =========================================================
-st.set_page_config(page_title="Salog Envio de NFS", page_icon="🚛", layout="centered")
+st.set_page_config(page_title="Salog Express", page_icon="🚛", layout="centered")
 
 # Configuração Tesseract (Windows vs Linux/Cloud)
 if platform.system() == "Windows":
-    # Ajuste o caminho se necessário no seu PC
     caminho_tesseract = r"C:\Users\eduardo.costa\Tesseract-OCR\tesseract.exe"
     try: pytesseract.pytesseract.tesseract_cmd = caminho_tesseract
     except: pass
@@ -37,11 +36,11 @@ except:
     EMAIL_FATURAMENTO = "eduardo.costa@salog.com.br"
 
 # =========================================================
-# 2. VALIDAÇÃO INTELIGENTE (CORREÇÃO DO PROBLEMA DE LEITURA)
+# 2. VALIDAÇÃO INTELIGENTE (O "FISCAL" DE CHAVES)
 # =========================================================
 
-# Lista de códigos de UF (Estados) válidos no Brasil
-# Se a chave não começar com um desses, a leitura está errada.
+# Lista de códigos de UF (Estados) válidos no Brasil.
+# Se a chave não começar com um desses, o leitor leu código errado (logística interna).
 CODIGOS_UF_VALIDOS = [
     '11', '12', '13', '14', '15', '16', '17', # Norte
     '21', '22', '23', '24', '25', '26', '27', '28', '29', # Nordeste
@@ -52,8 +51,7 @@ CODIGOS_UF_VALIDOS = [
 
 def validar_chave(chave):
     """
-    Verifica se a chave tem 44 dígitos numéricos E se começa com uma UF válida.
-    Isso evita ler códigos de barras internos de logística.
+    Retorna True se a chave for válida (44 dígitos E começa com UF real).
     """
     if not chave: return False
     if len(chave) != 44: return False
@@ -63,14 +61,14 @@ def validar_chave(chave):
     return uf in CODIGOS_UF_VALIDOS
 
 # =========================================================
-# 3. PROCESSAMENTO DE IMAGEM
+# 3. FUNÇÕES DE PROCESSAMENTO (OCR + BARRAS)
 # =========================================================
 def processar_imagem(img):
-    """ Tenta ler a chave (Barras ou OCR) com validação rígida. """
+    """ Tenta ler a chave. Se o código de barras for inválido, tenta o OCR. """
     
     # --- TENTATIVA 1: Código de Barras ---
     try:
-        # Tenta ler na imagem original e redimensionada
+        # Tenta ler na imagem original e numa versão reduzida (zoom out)
         imagens_teste = [img]
         if img.width > 2000:
             ratio = 2000 / float(img.width)
@@ -81,40 +79,39 @@ def processar_imagem(img):
             codigos = decode(imagem_atual)
             for c in codigos:
                 txt = c.data.decode('utf-8')
-                # SÓ ACEITA SE FOR UMA CHAVE VÁLIDA (Começa com 35, 33, etc...)
+                # AQUI É O PULO DO GATO: Só aceita se passar na validação de UF
                 if validar_chave(txt):
                     return txt, txt[25:34]
+                else:
+                    print(f"Ignorando leitura inválida de barras: {txt}")
     except: pass
 
     # --- TENTATIVA 2: OCR Turbinado (Leitura de Texto) ---
     try:
-        # Prepara a imagem (Tira cor, remove ruído, remove sombras)
         img_np = np.array(img)
         if len(img_np.shape) == 3: gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         else: gray = img_np
         
+        # Filtros para limpar a imagem
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
         thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
         img_pil = Image.fromarray(thresh)
         
-        # OCR configurado para ler apenas números
+        # Leitura apenas de números
         txt = pytesseract.image_to_string(img_pil, config="--psm 6 outputbase digits")
         txt_limpo = re.sub(r'[^0-9]', '', txt)
         
-        # Procura qualquer sequência de 44 dígitos no texto
+        # Procura sequência de 44 dígitos
         match = re.search(r'\d{44}', txt_limpo)
         if match:
             chave_encontrada = match.group(0)
-            # Valida se a chave encontrada pelo OCR faz sentido
+            # Valida também o OCR
             if validar_chave(chave_encontrada):
                 return chave_encontrada, chave_encontrada[25:34]
     except: pass
     
     return None, None
 
-# =========================================================
-# 4. FUNÇÃO DE E-MAIL
-# =========================================================
 def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
     usuario_envio = dados_viagem['usuario']
     motorista = dados_viagem['mot']
@@ -175,10 +172,10 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
         return False
 
 # =========================================================
-# 5. APLICAÇÃO PRINCIPAL (INTERFACE)
+# 4. APLICAÇÃO PRINCIPAL (INTERFACE)
 # =========================================================
 
-st.title("🚛 Salog Envio de NFS")
+st.title("🚛 Salog Express Web")
 
 if 'etapa' not in st.session_state: st.session_state.etapa = 'dados'
 if 'notas_processadas' not in st.session_state: st.session_state.notas_processadas = []
@@ -247,7 +244,7 @@ elif st.session_state.etapa == 'fotos':
                     st.session_state.notas_processadas.append({'chave': chave_u, 'nf': nf_u, 'img': img_u})
                     novos += 1
                 else:
-                    # Se falhar na validação, vai para manual
+                    # Falhou na validação (barras erradas ou foto ruim) -> Manual
                     st.session_state.notas_processadas.append({'chave': "VER ANEXO", 'nf': "MANUAL", 'img': img_u})
                     novos += 1
             
