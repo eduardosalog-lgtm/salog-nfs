@@ -178,7 +178,7 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
 # 5. APLICAÇÃO PRINCIPAL (INTERFACE)
 # =========================================================
 
-st.title("🚛 Salog Express Web")
+st.title("🚛 Salog Envio de NFS")
 
 if 'etapa' not in st.session_state: st.session_state.etapa = 'dados'
 if 'notas_processadas' not in st.session_state: st.session_state.notas_processadas = []
