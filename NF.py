@@ -36,54 +36,29 @@ except:
 # 2. VALIDAÇÃO MATEMÁTICA (MODULO 11 - NFe)
 # =========================================================
 def validar_chave(chave):
-    """
-    Retorna True APENAS se a chave for uma NFe válida do Brasil.
-    Isso elimina leituras erradas de código de barras internos (iniciados com 10, 00, etc).
-    """
     try:
-        # 1. Tamanho e Números
-        if not chave or len(chave) != 44 or not chave.isdigit():
-            return False
+        if not chave or len(chave) != 44 or not chave.isdigit(): return False
         
-        # 2. UF (Estado) Válida
-        codigos_uf = [
-            '11', '12', '13', '14', '15', '16', '17',
-            '21', '22', '23', '24', '25', '26', '27', '28', '29',
-            '31', '32', '33', '35',
-            '41', '42', '43',
-            '50', '51', '52', '53'
-        ]
-        if chave[:2] not in codigos_uf:
-            return False # Se começar com 10, 00, 99... retorna Falso aqui.
+        codigos_uf = ['11','12','13','14','15','16','17','21','22','23','24','25','26','27','28','29','31','32','33','35','41','42','43','50','51','52','53']
+        if chave[:2] not in codigos_uf: return False
 
-        # 3. Cálculo do Dígito Verificador (Matemática da Receita Federal)
         corpo = chave[:43]
         dv_informado = int(chave[43])
-        
-        # Pesos da multiplicação (de 2 a 9, da direita para esquerda)
-        pesos = [4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-        
-        soma = 0
-        for i in range(43):
-            soma += int(corpo[i]) * pesos[i]
-            
+        pesos = [4,3,2,9,8,7,6,5,4,3,2,9,8,7,6,5,4,3,2,9,8,7,6,5,4,3,2,9,8,7,6,5,4,3,2,9,8,7,6,5,4,3,2]
+        soma = sum(int(corpo[i]) * pesos[i] for i in range(43))
         resto = soma % 11
         dv_calculado = 0 if resto < 2 else 11 - resto
         
         return dv_calculado == dv_informado
-
-    except Exception as e:
-        print(f"Erro na validação: {e}")
-        return False
+    except: return False
 
 # =========================================================
-# 3. PROCESSAMENTO DE IMAGEM (OCR + BARRAS)
+# 3. PROCESSAMENTO DE IMAGEM
 # =========================================================
 def processar_imagem(img):
-    # --- TENTATIVA 1: BARRAS ---
+    # TENTATIVA 1: BARRAS
     try:
         imagens_teste = [img]
-        # Cria uma versão reduzida se a imagem for gigante (ajuda na performance)
         if img.width > 2000:
             ratio = 2000 / float(img.width)
             new_h = int(float(img.height) * float(ratio))
@@ -93,51 +68,36 @@ def processar_imagem(img):
             codigos = decode(imagem_atual)
             for c in codigos:
                 txt = c.data.decode('utf-8')
-                
-                # AQUI O SEGREDO: Se a validação matemática der OK, retorna.
-                if validar_chave(txt):
-                    return txt, txt[25:34]
-                else:
-                    # Se leu errado (tipo 1000...), apenas ignora e deixa o código seguir pro OCR
-                    pass 
-    except Exception as e:
-        print(f"Erro no módulo de barras: {e}")
+                if validar_chave(txt): return txt, txt[25:34]
+    except: pass
 
-    # --- TENTATIVA 2: OCR (LEITURA VISUAL) ---
+    # TENTATIVA 2: OCR
     try:
         img_np = np.array(img)
-        # Converte para cinza
         if len(img_np.shape) == 3: gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         else: gray = img_np
-        
-        # Filtros de limpeza
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
         thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
         img_pil = Image.fromarray(thresh)
         
-        # OCR configurado para ler apenas números
         txt = pytesseract.image_to_string(img_pil, config="--psm 6 outputbase digits")
         txt_limpo = re.sub(r'[^0-9]', '', txt)
-        
-        # Procura chave de 44 dígitos
         match = re.search(r'\d{44}', txt_limpo)
         if match:
             chave = match.group(0)
-            if validar_chave(chave):
-                return chave, chave[25:34]
-    except Exception as e:
-        print(f"Erro no módulo OCR: {e}")
-    
+            if validar_chave(chave): return chave, chave[25:34]
+    except: pass
     return None, None
 
 def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
     try:
-        usuario_envio = dados_viagem['usuario']
         motorista = dados_viagem['mot']
         pv = dados_viagem['pv']
+        categoria = dados_viagem['categoria'] # Novo campo
         obs = dados_viagem['obs']
         
-        assunto = f"PV {pv} - {motorista}"
+        # Assunto agora mostra a categoria logo de cara
+        assunto = f"[{categoria}] PV {pv} - {motorista}"
         
         msg = MIMEMultipart()
         msg['Subject'] = assunto
@@ -147,7 +107,7 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
         corpo = f"""
         ENTREGA DE NOTAS - APP LOGÍSTICA
         ================================
-        ENVIADO POR: {usuario_envio}
+        CATEGORIA: {categoria}
         
         DADOS DA VIAGEM:
         ----------------
@@ -187,7 +147,6 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
         server.quit()
         return True
     except Exception as e:
-        st.error(f"Erro ao enviar e-mail: {e}")
         return False
 
 # =========================================================
@@ -201,58 +160,64 @@ if 'notas_processadas' not in st.session_state: st.session_state.notas_processad
 
 # ETAPA 1: DADOS
 if st.session_state.etapa == 'dados':
-    st.info("Preencha os dados da viagem.")
+    st.info("Olá Motorista! Preencha os dados da viagem.")
     
-    usuario_envio = st.text_input("👤 Quem está enviando? (Seu Nome) *", placeholder="Ex: Eduardo Costa")
+    # NOVA SELEÇÃO DE CATEGORIA
+    categoria = st.selectbox(
+        "Tipo de Veículo / Contratação *",
+        ["FROTA", "AGREGADO", "TERCEIRO"],
+        index=0
+    )
+    
     st.markdown("---")
     
     c1, c2 = st.columns(2)
-    mot = c1.text_input("Motorista *", placeholder="Nome")
-    pv = c2.text_input("PV *", placeholder="Número PV")
+    mot = c1.text_input("Nome do Motorista *", placeholder="Seu nome completo")
+    pv = c2.text_input("Número da PV *", placeholder="Ex: 12345")
     
     c3, c4 = st.columns(2)
     orig = c3.text_input("Origem", placeholder="Cidade Coleta")
     dest = c4.text_input("Destino", placeholder="Cidade Entrega")
     
-    obs = st.text_area("📝 Observações (Opcional)", placeholder="Ex: Avaria, falta canhoto...")
+    obs = st.text_area("Observações (Opcional)", placeholder="Ex: Avaria, falta canhoto, atraso...")
     
     if st.button("Continuar ➡️", type="primary"):
-        if usuario_envio and mot and pv:
+        if mot and pv:
             st.session_state.dados = {
-                'usuario': usuario_envio, 'mot': mot, 'pv': pv, 
+                'categoria': categoria, 'mot': mot, 'pv': pv, 
                 'orig': orig, 'dest': dest, 'obs': obs
             }
             st.session_state.etapa = 'fotos'
             st.rerun()
         else:
-            st.error("⚠️ Preencha: Seu Nome, Motorista e PV.")
+            st.error("⚠️ Preencha seu Nome e o número da PV.")
 
 # ETAPA 2: FOTOS
 elif st.session_state.etapa == 'fotos':
     d = st.session_state.dados
-    st.caption(f"Enviado por: {d['usuario']} | PV: {d['pv']}")
+    # Cabeçalho simplificado para o motorista
+    st.caption(f"Motorista: {d['mot']} ({d['categoria']}) | PV: {d['pv']}")
     
     qtd = len(st.session_state.notas_processadas)
     if qtd > 0:
-        st.success(f"✅ {qtd} notas na cesta")
-        with st.expander("Ver lista processada"):
+        st.success(f"✅ {qtd} notas lidas")
+        with st.expander("Ver lista"):
             for n in st.session_state.notas_processadas:
                 status = n['nf'] if n['nf'] != "MANUAL" else "⚠️ ANÁLISE HUMANA"
                 st.text(f"- {status}")
     
     st.markdown("---")
-    
-    st.subheader("📸 Adicionar Notas")
+    st.subheader("📸 Tirar Fotos das Notas")
     
     uploads = st.file_uploader(
-        "Tirar fotos ou Selecionar arquivos", 
+        "Toque aqui para abrir a Câmera ou Galeria", 
         type=['jpg', 'png', 'jpeg'],
         accept_multiple_files=True,
-        label_visibility="collapsed"
+        label_visibility="visible"
     )
     
     if uploads:
-        if st.button("🔍 Processar Seleção", type="primary"):
+        if st.button("🔍 Processar Fotos", type="primary"):
             novos = 0
             for u in uploads:
                 img_u = Image.open(u)
@@ -262,52 +227,50 @@ elif st.session_state.etapa == 'fotos':
                     st.session_state.notas_processadas.append({'chave': chave_u, 'nf': nf_u, 'img': img_u})
                     novos += 1
                 else:
-                    # Falhou na validação matemática? Vai pra manual
                     st.session_state.notas_processadas.append({'chave': "VER ANEXO", 'nf': "MANUAL", 'img': img_u})
                     novos += 1
             
             if novos > 0:
-                st.success(f"{novos} imagens processadas!")
+                st.success(f"{novos} fotos adicionadas!")
                 st.rerun()
 
     st.markdown("---")
     c_v, c_a = st.columns(2)
-    if c_v.button("⬅️ Voltar"):
+    if c_v.button("⬅️ Corrigir Dados"):
         st.session_state.etapa = 'dados'
         st.rerun()
     if c_a.button("Finalizar Envio ➡️", type="primary"):
         if qtd > 0:
             st.session_state.etapa = 'envio'
             st.rerun()
-        else: st.error("Adicione pelo menos uma nota.")
+        else: st.error("Tire foto de pelo menos uma nota.")
 
 # ETAPA 3: ENVIO
 elif st.session_state.etapa == 'envio':
-    st.subheader("🚀 Conferência Final")
+    st.subheader("🚀 Conferir e Enviar")
     
     texto = ""
     for item in st.session_state.notas_processadas:
         icone = "✅" if item['nf'] != "MANUAL" else "⚠️"
         texto += f"{icone} NF:{item['nf']} - CHAVE: {item['chave']}\n"
     
-    st.text_area("Resumo:", value=texto, height=200, disabled=True)
+    st.text_area("Resumo das Notas:", value=texto, height=200, disabled=True)
     
     if st.session_state.dados['obs']:
-        st.info(f"📝 Obs: {st.session_state.dados['obs']}")
+        st.info(f"Obs: {st.session_state.dados['obs']}")
 
-    if st.button("✈️ ENVIAR TUDO", type="primary"):
+    if st.button("✈️ ENVIAR AGORA", type="primary"):
         d = st.session_state.dados
         with st.spinner("Enviando..."):
             ok = enviar_email_com_anexos(texto, d, st.session_state.notas_processadas)
             if ok:
                 st.balloons()
-                st.success("Enviado com sucesso!")
+                st.success("Enviado com sucesso! Boa viagem.")
                 st.session_state.notas_processadas = []
                 st.session_state.etapa = 'dados'
                 if st.button("Nova Viagem"): st.rerun()
             else:
-                # O erro detalhado aparecerá aqui se falhar
-                pass 
+                pass
     
     if st.button("⬅️ Voltar"):
         st.session_state.etapa = 'fotos'
