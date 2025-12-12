@@ -18,54 +18,103 @@ import io
 # =========================================================
 st.set_page_config(page_title="Salog Express", page_icon="🚛", layout="centered")
 
+# Configuração Tesseract (Windows vs Linux/Cloud)
 if platform.system() == "Windows":
+    # Ajuste o caminho se necessário no seu PC
     caminho_tesseract = r"C:\Users\eduardo.costa\Tesseract-OCR\tesseract.exe"
     try: pytesseract.pytesseract.tesseract_cmd = caminho_tesseract
     except: pass
 
+# Carregar Segredos de E-mail
 try:
     SEU_EMAIL = st.secrets["email_remetente"]
     SUA_SENHA = st.secrets["senha_email"]
     EMAIL_FATURAMENTO = st.secrets["email_destino"]
 except:
+    # Fallback para teste local
     SEU_EMAIL = "eduardo.costa.eh25@gmail.com"
     SUA_SENHA = "gerr ouyx atjs ijps" 
     EMAIL_FATURAMENTO = "eduardo.costa@salog.com.br"
 
 # =========================================================
-# 2. FUNÇÕES DO SISTEMA
+# 2. VALIDAÇÃO INTELIGENTE (CORREÇÃO DO PROBLEMA DE LEITURA)
+# =========================================================
+
+# Lista de códigos de UF (Estados) válidos no Brasil
+# Se a chave não começar com um desses, a leitura está errada.
+CODIGOS_UF_VALIDOS = [
+    '11', '12', '13', '14', '15', '16', '17', # Norte
+    '21', '22', '23', '24', '25', '26', '27', '28', '29', # Nordeste
+    '31', '32', '33', '35', # Sudeste (SP é 35)
+    '41', '42', '43', # Sul
+    '50', '51', '52', '53' # Centro-Oeste
+]
+
+def validar_chave(chave):
+    """
+    Verifica se a chave tem 44 dígitos numéricos E se começa com uma UF válida.
+    Isso evita ler códigos de barras internos de logística.
+    """
+    if not chave: return False
+    if len(chave) != 44: return False
+    if not chave.isdigit(): return False
+    
+    uf = chave[:2] # Pega os dois primeiros dígitos
+    return uf in CODIGOS_UF_VALIDOS
+
+# =========================================================
+# 3. PROCESSAMENTO DE IMAGEM
 # =========================================================
 def processar_imagem(img):
-    # 1. Tenta Código de Barras
+    """ Tenta ler a chave (Barras ou OCR) com validação rígida. """
+    
+    # --- TENTATIVA 1: Código de Barras ---
     try:
+        # Tenta ler na imagem original e redimensionada
+        imagens_teste = [img]
         if img.width > 2000:
             ratio = 2000 / float(img.width)
             new_h = int(float(img.height) * float(ratio))
-            img_red = img.resize((2000, new_h))
-        else: img_red = img
-        codigos = decode(img_red)
-        for c in codigos:
-            txt = c.data.decode('utf-8')
-            if len(txt) == 44 and txt.isdigit(): return txt, txt[25:34]
+            imagens_teste.append(img.resize((2000, new_h)))
+            
+        for imagem_atual in imagens_teste:
+            codigos = decode(imagem_atual)
+            for c in codigos:
+                txt = c.data.decode('utf-8')
+                # SÓ ACEITA SE FOR UMA CHAVE VÁLIDA (Começa com 35, 33, etc...)
+                if validar_chave(txt):
+                    return txt, txt[25:34]
     except: pass
 
-    # 2. Tenta OCR Turbinado
+    # --- TENTATIVA 2: OCR Turbinado (Leitura de Texto) ---
     try:
+        # Prepara a imagem (Tira cor, remove ruído, remove sombras)
         img_np = np.array(img)
         if len(img_np.shape) == 3: gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         else: gray = img_np
+        
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
         thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
         img_pil = Image.fromarray(thresh)
+        
+        # OCR configurado para ler apenas números
         txt = pytesseract.image_to_string(img_pil, config="--psm 6 outputbase digits")
         txt_limpo = re.sub(r'[^0-9]', '', txt)
+        
+        # Procura qualquer sequência de 44 dígitos no texto
         match = re.search(r'\d{44}', txt_limpo)
         if match:
-            chave = match.group(0)
-            return chave, chave[25:34]
+            chave_encontrada = match.group(0)
+            # Valida se a chave encontrada pelo OCR faz sentido
+            if validar_chave(chave_encontrada):
+                return chave_encontrada, chave_encontrada[25:34]
     except: pass
+    
     return None, None
 
+# =========================================================
+# 4. FUNÇÃO DE E-MAIL
+# =========================================================
 def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
     usuario_envio = dados_viagem['usuario']
     motorista = dados_viagem['mot']
@@ -126,7 +175,7 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
         return False
 
 # =========================================================
-# 3. APLICAÇÃO PRINCIPAL
+# 5. APLICAÇÃO PRINCIPAL (INTERFACE)
 # =========================================================
 
 st.title("🚛 Salog Express Web")
@@ -162,12 +211,11 @@ if st.session_state.etapa == 'dados':
         else:
             st.error("⚠️ Preencha: Seu Nome, Motorista e PV.")
 
-# --- ETAPA 2: FOTOS (INTERFACE UNIFICADA) ---
+# --- ETAPA 2: FOTOS ---
 elif st.session_state.etapa == 'fotos':
     d = st.session_state.dados
     st.caption(f"Enviado por: {d['usuario']} | PV: {d['pv']}")
     
-    # Lista do que já foi processado
     qtd = len(st.session_state.notas_processadas)
     if qtd > 0:
         st.success(f"✅ {qtd} notas na cesta")
@@ -178,33 +226,33 @@ elif st.session_state.etapa == 'fotos':
     
     st.markdown("---")
     
-    # A MUDANÇA ESTÁ AQUI: Interface limpa
     st.subheader("📸 Adicionar Notas")
-    st.info("No celular, ao clicar abaixo, você pode escolher **Câmera** ou **Galeria**.")
+    st.info("Escolha Câmera ou Galeria no botão abaixo:")
     
     uploads = st.file_uploader(
         "Tirar fotos ou Selecionar arquivos", 
         type=['jpg', 'png', 'jpeg'],
         accept_multiple_files=True,
-        label_visibility="collapsed" # Esconde o rótulo para ficar mais limpo
+        label_visibility="collapsed"
     )
     
     if uploads:
-        if st.button("🔍 Processar Arquivos Selecionados", type="primary"):
+        if st.button("🔍 Processar Seleção", type="primary"):
             novos = 0
             for u in uploads:
                 img_u = Image.open(u)
                 chave_u, nf_u = processar_imagem(img_u)
+                
                 if chave_u:
                     st.session_state.notas_processadas.append({'chave': chave_u, 'nf': nf_u, 'img': img_u})
                     novos += 1
                 else:
-                    # Se não leu, já manda para Análise Humana direto (Plano B automático)
+                    # Se falhar na validação, vai para manual
                     st.session_state.notas_processadas.append({'chave': "VER ANEXO", 'nf': "MANUAL", 'img': img_u})
                     novos += 1
             
             if novos > 0:
-                st.success(f"{novos} novas imagens processadas!")
+                st.success(f"{novos} imagens processadas!")
                 st.rerun()
 
     st.markdown("---")
