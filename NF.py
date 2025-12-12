@@ -16,7 +16,7 @@ import io
 # =========================================================
 # 1. CONFIGURAÇÕES E SETUP
 # =========================================================
-st.set_page_config(page_title="Salog Express", page_icon="🚛", layout="centered")
+st.set_page_config(page_title="Salog Envio de NFS", page_icon="🚛", layout="centered")
 
 if platform.system() == "Windows":
     caminho_tesseract = r"C:\Users\eduardo.costa\Tesseract-OCR\tesseract.exe"
@@ -155,7 +155,7 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
 # 4. INTERFACE
 # =========================================================
 
-st.title("🚛 Salog Express Web")
+st.title("🚛 Salog Envio de NFS")
 
 if 'etapa' not in st.session_state: st.session_state.etapa = 'dados'
 if 'notas_processadas' not in st.session_state: st.session_state.notas_processadas = []
