@@ -23,14 +23,17 @@ if platform.system() == "Windows":
     try: pytesseract.pytesseract.tesseract_cmd = caminho_tesseract
     except: pass
 
+# --- BLOCO DE SEGURANÇA (SEM SENHAS NO CÓDIGO) ---
 try:
     SEU_EMAIL = st.secrets["email_remetente"]
     SUA_SENHA = st.secrets["senha_email"]
     EMAIL_FATURAMENTO = st.secrets["email_destino"]
 except:
-    SEU_EMAIL = "eduardo.costa.eh25@gmail.com"
-    SUA_SENHA = "gerr ouyx atjs ijps" 
-    EMAIL_FATURAMENTO = "eduardo.costa@salog.com.br"
+    # Se não achar os segredos, o app para e avisa.
+    st.error("❌ ERRO DE CONFIGURAÇÃO: Segredos (Secrets) não encontrados.")
+    st.info("Se você está rodando no Streamlit Cloud, configure as senhas no painel 'Secrets'.")
+    st.info("Se você está rodando localmente, crie o arquivo .streamlit/secrets.toml")
+    st.stop() # Interrompe o código aqui para não dar erro depois
 
 # =========================================================
 # 2. VALIDAÇÃO MATEMÁTICA (MODULO 11 - NFe)
@@ -93,10 +96,9 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
     try:
         motorista = dados_viagem['mot']
         pv = dados_viagem['pv']
-        categoria = dados_viagem['categoria'] # Novo campo
+        categoria = dados_viagem['categoria']
         obs = dados_viagem['obs']
         
-        # Assunto agora mostra a categoria logo de cara
         assunto = f"[{categoria}] PV {pv} - {motorista}"
         
         msg = MIMEMultipart()
@@ -162,7 +164,6 @@ if 'notas_processadas' not in st.session_state: st.session_state.notas_processad
 if st.session_state.etapa == 'dados':
     st.info("Olá Motorista! Preencha os dados da viagem.")
     
-    # NOVA SELEÇÃO DE CATEGORIA
     categoria = st.selectbox(
         "Tipo de Veículo / Contratação *",
         ["FROTA", "AGREGADO", "TERCEIRO"],
@@ -195,7 +196,6 @@ if st.session_state.etapa == 'dados':
 # ETAPA 2: FOTOS
 elif st.session_state.etapa == 'fotos':
     d = st.session_state.dados
-    # Cabeçalho simplificado para o motorista
     st.caption(f"Motorista: {d['mot']} ({d['categoria']}) | PV: {d['pv']}")
     
     qtd = len(st.session_state.notas_processadas)
