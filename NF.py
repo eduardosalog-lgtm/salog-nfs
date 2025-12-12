@@ -33,57 +33,57 @@ except:
     EMAIL_FATURAMENTO = "eduardo.costa@salog.com.br"
 
 # =========================================================
-# 2. VALIDAÇÃO MATEMÁTICA (Bala de Prata)
+# 2. VALIDAÇÃO MATEMÁTICA (MODULO 11 - NFe)
 # =========================================================
-
-def validar_chave_acesso(chave):
+def validar_chave(chave):
     """
-    Valida se a chave de acesso NFe é matematicamente válida (Módulo 11).
-    Isso elimina 99.9% de leituras erradas de código de barras.
+    Retorna True APENAS se a chave for uma NFe válida do Brasil.
+    Isso elimina leituras erradas de código de barras internos (iniciados com 10, 00, etc).
     """
-    # 1. Validações básicas
-    if not chave or len(chave) != 44 or not chave.isdigit():
-        return False
-    
-    # 2. Validação de UF (Estado)
-    # Se começar com 00, 10, 99... já corta logo.
-    codigos_uf_validos = [
-        '11', '12', '13', '14', '15', '16', '17',
-        '21', '22', '23', '24', '25', '26', '27', '28', '29',
-        '31', '32', '33', '35',
-        '41', '42', '43',
-        '50', '51', '52', '53'
-    ]
-    if chave[:2] not in codigos_uf_validos:
-        return False
+    try:
+        # 1. Tamanho e Números
+        if not chave or len(chave) != 44 or not chave.isdigit():
+            return False
+        
+        # 2. UF (Estado) Válida
+        codigos_uf = [
+            '11', '12', '13', '14', '15', '16', '17',
+            '21', '22', '23', '24', '25', '26', '27', '28', '29',
+            '31', '32', '33', '35',
+            '41', '42', '43',
+            '50', '51', '52', '53'
+        ]
+        if chave[:2] not in codigos_uf:
+            return False # Se começar com 10, 00, 99... retorna Falso aqui.
 
-    # 3. VALIDAÇÃO MATEMÁTICA (Dígito Verificador)
-    # Pega os primeiros 43 dígitos
-    corpo = chave[:43]
-    dv_informado = int(chave[43])
-    
-    # Pesos padrão da Receita Federal (2 a 9, da direita para esquerda)
-    pesos = [4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-    
-    soma = 0
-    for i in range(43):
-        soma += int(corpo[i]) * pesos[i]
+        # 3. Cálculo do Dígito Verificador (Matemática da Receita Federal)
+        corpo = chave[:43]
+        dv_informado = int(chave[43])
         
-    resto = soma % 11
-    if resto < 2:
-        dv_calculado = 0
-    else:
-        dv_calculado = 11 - resto
+        # Pesos da multiplicação (de 2 a 9, da direita para esquerda)
+        pesos = [4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
         
-    return dv_calculado == dv_informado
+        soma = 0
+        for i in range(43):
+            soma += int(corpo[i]) * pesos[i]
+            
+        resto = soma % 11
+        dv_calculado = 0 if resto < 2 else 11 - resto
+        
+        return dv_calculado == dv_informado
+
+    except Exception as e:
+        print(f"Erro na validação: {e}")
+        return False
 
 # =========================================================
-# 3. PROCESSAMENTO
+# 3. PROCESSAMENTO DE IMAGEM (OCR + BARRAS)
 # =========================================================
 def processar_imagem(img):
-    # TENTATIVA 1: Código de Barras
+    # --- TENTATIVA 1: BARRAS ---
     try:
         imagens_teste = [img]
+        # Cria uma versão reduzida se a imagem for gigante (ajuda na performance)
         if img.width > 2000:
             ratio = 2000 / float(img.width)
             new_h = int(float(img.height) * float(ratio))
@@ -94,84 +94,92 @@ def processar_imagem(img):
             for c in codigos:
                 txt = c.data.decode('utf-8')
                 
-                # AQUI: Se a validação matemática falhar, ele ignora o código de barras
-                if validar_chave_acesso(txt):
+                # AQUI O SEGREDO: Se a validação matemática der OK, retorna.
+                if validar_chave(txt):
                     return txt, txt[25:34]
                 else:
-                    # Isso vai aparecer no terminal se você estiver olhando
-                    print(f"⚠️ Leitura de barras rejeitada (Dígito Verificador inválido): {txt}")
-    except: pass
+                    # Se leu errado (tipo 1000...), apenas ignora e deixa o código seguir pro OCR
+                    pass 
+    except Exception as e:
+        print(f"Erro no módulo de barras: {e}")
 
-    # TENTATIVA 2: OCR
+    # --- TENTATIVA 2: OCR (LEITURA VISUAL) ---
     try:
         img_np = np.array(img)
+        # Converte para cinza
         if len(img_np.shape) == 3: gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         else: gray = img_np
+        
+        # Filtros de limpeza
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
         thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
         img_pil = Image.fromarray(thresh)
         
+        # OCR configurado para ler apenas números
         txt = pytesseract.image_to_string(img_pil, config="--psm 6 outputbase digits")
         txt_limpo = re.sub(r'[^0-9]', '', txt)
+        
+        # Procura chave de 44 dígitos
         match = re.search(r'\d{44}', txt_limpo)
         if match:
             chave = match.group(0)
-            if validar_chave_acesso(chave):
+            if validar_chave(chave):
                 return chave, chave[25:34]
-    except: pass
+    except Exception as e:
+        print(f"Erro no módulo OCR: {e}")
     
     return None, None
 
 def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
-    usuario_envio = dados_viagem['usuario']
-    motorista = dados_viagem['mot']
-    pv = dados_viagem['pv']
-    obs = dados_viagem['obs']
-    
-    assunto = f"PV {pv} - {motorista}"
-    
-    msg = MIMEMultipart()
-    msg['Subject'] = assunto
-    msg['From'] = SEU_EMAIL
-    msg['To'] = EMAIL_FATURAMENTO
-    
-    corpo = f"""
-    ENTREGA DE NOTAS - APP LOGÍSTICA
-    ================================
-    ENVIADO POR: {usuario_envio}
-    
-    DADOS DA VIAGEM:
-    ----------------
-    Motorista: {motorista}
-    PV: {pv}
-    Rota: {dados_viagem['orig']} -> {dados_viagem['dest']}
-    
-    OBSERVAÇÕES:
-    {obs if obs else "Nenhuma observação."}
-    
-    RESUMO:
-    -------
-    Qtd Notas: {len(lista_notas)}
-    
-    LEITURAS REALIZADAS:
-    {texto_final}
-    """
-    msg.attach(MIMEText(corpo, 'plain'))
-    
-    for i, item in enumerate(lista_notas):
-        try:
-            img_byte_arr = io.BytesIO()
-            item['img'].save(img_byte_arr, format='JPEG', quality=85)
-            img_byte_arr = img_byte_arr.getvalue()
-            part = MIMEBase('application', "octet-stream")
-            part.set_payload(img_byte_arr)
-            encoders.encode_base64(part)
-            nome_arq = f"NF_{item['nf']}.jpg" if item['nf'] != "MANUAL" else f"FOTO_MANUAL_{i+1}.jpg"
-            part.add_header('Content-Disposition', f'attachment; filename="{nome_arq}"')
-            msg.attach(part)
-        except: pass
-
     try:
+        usuario_envio = dados_viagem['usuario']
+        motorista = dados_viagem['mot']
+        pv = dados_viagem['pv']
+        obs = dados_viagem['obs']
+        
+        assunto = f"PV {pv} - {motorista}"
+        
+        msg = MIMEMultipart()
+        msg['Subject'] = assunto
+        msg['From'] = SEU_EMAIL
+        msg['To'] = EMAIL_FATURAMENTO
+        
+        corpo = f"""
+        ENTREGA DE NOTAS - APP LOGÍSTICA
+        ================================
+        ENVIADO POR: {usuario_envio}
+        
+        DADOS DA VIAGEM:
+        ----------------
+        Motorista: {motorista}
+        PV: {pv}
+        Rota: {dados_viagem['orig']} -> {dados_viagem['dest']}
+        
+        OBSERVAÇÕES:
+        {obs if obs else "Nenhuma observação."}
+        
+        RESUMO:
+        -------
+        Qtd Notas: {len(lista_notas)}
+        
+        LEITURAS REALIZADAS:
+        {texto_final}
+        """
+        msg.attach(MIMEText(corpo, 'plain'))
+        
+        for i, item in enumerate(lista_notas):
+            try:
+                img_byte_arr = io.BytesIO()
+                item['img'].save(img_byte_arr, format='JPEG', quality=85)
+                img_byte_arr = img_byte_arr.getvalue()
+                part = MIMEBase('application', "octet-stream")
+                part.set_payload(img_byte_arr)
+                encoders.encode_base64(part)
+                nome_arq = f"NF_{item['nf']}.jpg" if item['nf'] != "MANUAL" else f"FOTO_MANUAL_{i+1}.jpg"
+                part.add_header('Content-Disposition', f'attachment; filename="{nome_arq}"')
+                msg.attach(part)
+            except: pass
+
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(SEU_EMAIL, SUA_SENHA)
@@ -179,6 +187,7 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
         server.quit()
         return True
     except Exception as e:
+        st.error(f"Erro ao enviar e-mail: {e}")
         return False
 
 # =========================================================
@@ -297,7 +306,8 @@ elif st.session_state.etapa == 'envio':
                 st.session_state.etapa = 'dados'
                 if st.button("Nova Viagem"): st.rerun()
             else:
-                st.error("Erro no envio.")
+                # O erro detalhado aparecerá aqui se falhar
+                pass 
     
     if st.button("⬅️ Voltar"):
         st.session_state.etapa = 'fotos'
