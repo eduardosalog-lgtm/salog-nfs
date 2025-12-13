@@ -16,7 +16,7 @@ import io
 # =========================================================
 # 1. CONFIGURAÇÕES E SETUP
 # =========================================================
-st.set_page_config(page_title="Salog Envio de NFS", page_icon="🚛", layout="centered")
+st.set_page_config(page_title="Salog Express", page_icon="🚛", layout="centered")
 
 if platform.system() == "Windows":
     caminho_tesseract = r"C:\Users\eduardo.costa\Tesseract-OCR\tesseract.exe"
@@ -29,25 +29,27 @@ try:
     SUA_SENHA = st.secrets["senha_email"]
     EMAIL_FATURAMENTO = st.secrets["email_destino"]
 except:
-    # Se não achar os segredos, o app para e avisa.
     st.error("❌ ERRO DE CONFIGURAÇÃO: Segredos (Secrets) não encontrados.")
-    st.info("Se você está rodando no Streamlit Cloud, configure as senhas no painel 'Secrets'.")
-    st.info("Se você está rodando localmente, crie o arquivo .streamlit/secrets.toml")
-    st.stop() # Interrompe o código aqui para não dar erro depois
+    st.info("Configure as senhas no painel 'Secrets' do Streamlit Cloud.")
+    st.stop()
 
 # =========================================================
 # 2. VALIDAÇÃO MATEMÁTICA (MODULO 11 - NFe)
 # =========================================================
 def validar_chave(chave):
     try:
+        # 1. Validações básicas de formato
         if not chave or len(chave) != 44 or not chave.isdigit(): return False
         
+        # 2. Valida UF (Estado)
         codigos_uf = ['11','12','13','14','15','16','17','21','22','23','24','25','26','27','28','29','31','32','33','35','41','42','43','50','51','52','53']
         if chave[:2] not in codigos_uf: return False
 
+        # 3. Cálculo do Dígito Verificador (Matemática da Receita)
         corpo = chave[:43]
         dv_informado = int(chave[43])
         pesos = [4,3,2,9,8,7,6,5,4,3,2,9,8,7,6,5,4,3,2,9,8,7,6,5,4,3,2,9,8,7,6,5,4,3,2,9,8,7,6,5,4,3,2]
+        
         soma = sum(int(corpo[i]) * pesos[i] for i in range(43))
         resto = soma % 11
         dv_calculado = 0 if resto < 2 else 11 - resto
@@ -56,17 +58,21 @@ def validar_chave(chave):
     except: return False
 
 # =========================================================
-# 3. PROCESSAMENTO DE IMAGEM
+# 3. PROCESSAMENTO DE IMAGEM (COM FILTRO PARA PONTILHADO)
 # =========================================================
 def processar_imagem(img):
-    # TENTATIVA 1: BARRAS
+    # --- TENTATIVA 1: CÓDIGO DE BARRAS ---
     try:
         imagens_teste = [img]
+        # Versão reduzida para performance
         if img.width > 2000:
             ratio = 2000 / float(img.width)
             new_h = int(float(img.height) * float(ratio))
             imagens_teste.append(img.resize((2000, new_h)))
-            
+        # Versão preto e branco direta
+        img_gray_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
+        imagens_teste.append(Image.fromarray(img_gray_cv))
+
         for imagem_atual in imagens_teste:
             codigos = decode(imagem_atual)
             for c in codigos:
@@ -74,22 +80,34 @@ def processar_imagem(img):
                 if validar_chave(txt): return txt, txt[25:34]
     except: pass
 
-    # TENTATIVA 2: OCR
+    # --- TENTATIVA 2: OCR "RAIO-X" (CORRIGE IMPRESSÃO FALHADA) ---
     try:
         img_np = np.array(img)
         if len(img_np.shape) == 3: gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         else: gray = img_np
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-        img_pil = Image.fromarray(thresh)
         
-        txt = pytesseract.image_to_string(img_pil, config="--psm 6 outputbase digits")
+        # Aumenta contraste (Preto fica mais preto, Branco mais branco)
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # FILTRO MÁGICO: DILATAÇÃO (Engrossa os números pontilhados)
+        kernel = np.ones((2, 2), np.uint8)
+        dilated = cv2.erode(thresh, kernel, iterations=1) 
+        
+        img_pil = Image.fromarray(dilated)
+        
+        # Configuração Rígida: Proíbe letras, aceita só números (whitelist)
+        config_ocr = "--psm 6 -c tessedit_char_whitelist=0123456789 outputbase digits"
+        
+        txt = pytesseract.image_to_string(img_pil, config=config_ocr)
         txt_limpo = re.sub(r'[^0-9]', '', txt)
+        
+        # Busca a chave de 44 dígitos
         match = re.search(r'\d{44}', txt_limpo)
         if match:
             chave = match.group(0)
             if validar_chave(chave): return chave, chave[25:34]
     except: pass
+    
     return None, None
 
 def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
@@ -99,6 +117,7 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
         categoria = dados_viagem['categoria']
         obs = dados_viagem['obs']
         
+        # Assunto já vem com a categoria para facilitar pro Faturamento
         assunto = f"[{categoria}] PV {pv} - {motorista}"
         
         msg = MIMEMultipart()
@@ -155,7 +174,7 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
 # 4. INTERFACE
 # =========================================================
 
-st.title("🚛 Salog Envio de NFS")
+st.title("🚛 Salog Express Web")
 
 if 'etapa' not in st.session_state: st.session_state.etapa = 'dados'
 if 'notas_processadas' not in st.session_state: st.session_state.notas_processadas = []
@@ -270,7 +289,7 @@ elif st.session_state.etapa == 'envio':
                 st.session_state.etapa = 'dados'
                 if st.button("Nova Viagem"): st.rerun()
             else:
-                pass
+                st.error("Erro no envio.")
     
     if st.button("⬅️ Voltar"):
         st.session_state.etapa = 'fotos'
