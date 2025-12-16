@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 import platform
 import io
-import google.generativeai as genai # BIBLIOTECA DA IA
+import google.generativeai as genai
 
 # =========================================================
 # 1. CONFIGURAÇÕES E SETUP
@@ -29,7 +29,6 @@ try:
     SEU_EMAIL = st.secrets["email_remetente"]
     SUA_SENHA = st.secrets["senha_email"]
     EMAIL_FATURAMENTO = st.secrets["email_destino"]
-    # Configura a IA do Google
     genai.configure(api_key=st.secrets["api_key_google"])
 except:
     st.error("❌ ERRO: Configure os Secrets (E-mail e API do Google).")
@@ -53,40 +52,53 @@ def validar_chave(chave):
     except: return False
 
 # =========================================================
-# 3. FUNÇÃO NOVA: LER COM IA (PLANO C)
+# 3. FUNÇÃO IA (COM FILTROS DE SEGURANÇA DESATIVADOS)
 # =========================================================
 def ler_com_ia_gemini(img):
-    """ Envia a imagem para o Google Gemini ler a chave. """
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        # O Prompt é a ordem que damos para a IA
+        # DESATIVA OS BLOQUEIOS DE SEGURANÇA (Para permitir ler dados da NF)
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        ]
+        
         prompt = """
-        Analise esta imagem de uma Nota Fiscal (Danfe).
-        Encontre a CHAVE DE ACESSO de 44 dígitos numéricos.
-        Responda APENAS os 44 números, sem texto, sem espaços, sem pontos.
-        Se não encontrar, responda 'null'.
+        Você é um sistema de OCR especializado em logística.
+        Analise esta imagem de DANFE (Nota Fiscal).
+        Sua missão é extrair a CHAVE DE ACESSO (44 dígitos numéricos).
+        Regras:
+        1. Procure pelo código de barras e os números abaixo dele.
+        2. Procure no canto superior direito (Chave de Acesso).
+        3. Ignore pontos, espaços e barras. Retorne APENAS os 44 números.
+        4. Se a imagem estiver ruim, tente deduzir os números pelo contexto visual.
+        Retorne apenas os números. Nada mais.
         """
         
-        response = model.generate_content([prompt, img])
+        response = model.generate_content([prompt, img], safety_settings=safety_settings)
         texto_ia = response.text.strip()
         
-        # Limpa o resultado (garante que só tem números)
         chave_limpa = re.sub(r'[^0-9]', '', texto_ia)
         
         if validar_chave(chave_limpa):
             return chave_limpa
         else:
+            # Debug: Se a IA leu algo errado, mostra no terminal para sabermos o que foi
+            print(f"IA leu inválido: {chave_limpa}")
             return None
     except Exception as e:
-        print(f"Erro IA: {e}")
+        # Debug na tela: Mostra o erro pro usuário ver o que houve
+        st.error(f"Erro detalhado da IA: {e}")
         return None
 
 # =========================================================
-# 4. PROCESSAMENTO PRINCIPAL (CASCATA)
+# 4. PROCESSAMENTO CASCATA
 # =========================================================
 def processar_imagem(img):
-    # --- TENTATIVA 1: BARRAS (Rápido e Grátis) ---
+    # 1. BARRAS
     try:
         imagens_teste = [img]
         if img.width > 2000:
@@ -100,11 +112,10 @@ def processar_imagem(img):
             codigos = decode(imagem_atual)
             for c in codigos:
                 txt = c.data.decode('utf-8')
-                if validar_chave(txt): 
-                    return txt, txt[25:34], "Código de Barras"
+                if validar_chave(txt): return txt, txt[25:34], "Código de Barras"
     except: pass
 
-    # --- TENTATIVA 2: OCR LOCAL (Médio e Grátis) ---
+    # 2. OCR LOCAL
     try:
         img_np = np.array(img)
         if len(img_np.shape) == 3: gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
@@ -119,12 +130,10 @@ def processar_imagem(img):
         match = re.search(r'\d{44}', txt_limpo)
         if match:
             chave = match.group(0)
-            if validar_chave(chave): 
-                return chave, chave[25:34], "OCR Local"
+            if validar_chave(chave): return chave, chave[25:34], "OCR Local"
     except: pass
     
-    # --- TENTATIVA 3: IA GEMINI (O Último Recurso) ---
-    # Só roda se os dois acima falharem
+    # 3. IA GEMINI (Agora Desbloqueada)
     chave_ia = ler_com_ia_gemini(img)
     if chave_ia:
          return chave_ia, chave_ia[25:34], "IA Google Gemini 🤖"
@@ -148,21 +157,12 @@ def enviar_email_com_anexos(texto_final, dados_viagem, lista_notas):
         ENTREGA DE NOTAS - APP LOGÍSTICA
         ================================
         CATEGORIA: {categoria}
-        
         DADOS DA VIAGEM:
-        ----------------
-        Motorista: {motorista}
-        PV: {pv}
+        Motorista: {motorista} | PV: {pv}
         Rota: {dados_viagem['orig']} -> {dados_viagem['dest']}
+        OBSERVAÇÕES: {obs if obs else "Nenhuma."}
         
-        OBSERVAÇÕES:
-        {obs if obs else "Nenhuma observação."}
-        
-        RESUMO:
-        -------
-        Qtd Notas: {len(lista_notas)}
-        
-        LEITURAS REALIZADAS:
+        LEITURAS:
         {texto_final}
         """
         msg.attach(MIMEText(corpo, 'plain'))
@@ -198,10 +198,8 @@ st.title("🚛 Salog Express Web")
 if 'etapa' not in st.session_state: st.session_state.etapa = 'dados'
 if 'notas_processadas' not in st.session_state: st.session_state.notas_processadas = []
 
-# ETAPA 1: DADOS
 if st.session_state.etapa == 'dados':
     st.info("Olá Motorista! Preencha os dados da viagem.")
-    
     categoria = st.selectbox("Tipo de Veículo / Contratação *", ["FROTA", "AGREGADO", "TERCEIRO"], index=0)
     st.markdown("---")
     c1, c2 = st.columns(2)
@@ -219,7 +217,6 @@ if st.session_state.etapa == 'dados':
             st.rerun()
         else: st.error("⚠️ Preencha seu Nome e o número da PV.")
 
-# ETAPA 2: FOTOS
 elif st.session_state.etapa == 'fotos':
     d = st.session_state.dados
     st.caption(f"Motorista: {d['mot']} ({d['categoria']}) | PV: {d['pv']}")
@@ -229,35 +226,28 @@ elif st.session_state.etapa == 'fotos':
         st.success(f"✅ {qtd} notas lidas")
         with st.expander("Ver lista"):
             for n in st.session_state.notas_processadas:
-                # Mostra qual método leu a nota (Barras, OCR ou IA)
-                metodo_display = f" ({n.get('metodo', 'Manual')})" if n['nf'] != "MANUAL" else ""
-                st.text(f"- NF: {n['nf']}{metodo_display}")
+                metodo = f" ({n.get('metodo', 'Manual')})" if n['nf'] != "MANUAL" else ""
+                st.text(f"- NF: {n['nf']}{metodo}")
     
     st.markdown("---")
     st.subheader("📸 Tirar Fotos das Notas")
-    
     uploads = st.file_uploader("Toque aqui para abrir a Câmera ou Galeria", type=['jpg', 'png', 'jpeg'], accept_multiple_files=True)
     
     if uploads:
         if st.button("🔍 Processar Fotos", type="primary"):
             novos = 0
-            # Barra de progresso visual
             progresso = st.progress(0)
             status_text = st.empty()
-            
-            total_arquivos = len(uploads)
+            total = len(uploads)
             
             for i, u in enumerate(uploads):
-                status_text.text(f"Analisando imagem {i+1} de {total_arquivos}...")
-                progresso.progress((i)/total_arquivos)
-                
+                status_text.text(f"Analisando nota {i+1}/{total} (Isso pode levar alguns segundos)...")
+                progresso.progress((i)/total)
                 img_u = Image.open(u)
+                chave, nf, metodo = processar_imagem(img_u)
                 
-                # CHAMA O PROCESSAMENTO (Barras -> OCR -> IA)
-                chave_u, nf_u, metodo_u = processar_imagem(img_u)
-                
-                if chave_u:
-                    st.session_state.notas_processadas.append({'chave': chave_u, 'nf': nf_u, 'img': img_u, 'metodo': metodo_u})
+                if chave:
+                    st.session_state.notas_processadas.append({'chave': chave, 'nf': nf, 'img': img_u, 'metodo': metodo})
                     novos += 1
                 else:
                     st.session_state.notas_processadas.append({'chave': "VER ANEXO", 'nf': "MANUAL", 'img': img_u, 'metodo': "Falha"})
@@ -265,10 +255,7 @@ elif st.session_state.etapa == 'fotos':
             
             progresso.progress(1.0)
             status_text.text("Concluído!")
-            
-            if novos > 0:
-                st.success(f"{novos} fotos processadas!")
-                st.rerun()
+            if novos > 0: st.rerun()
 
     st.markdown("---")
     c_v, c_a = st.columns(2)
@@ -281,7 +268,6 @@ elif st.session_state.etapa == 'fotos':
             st.rerun()
         else: st.error("Tire foto de pelo menos uma nota.")
 
-# ETAPA 3: ENVIO
 elif st.session_state.etapa == 'envio':
     st.subheader("🚀 Conferir e Enviar")
     texto = ""
@@ -290,21 +276,16 @@ elif st.session_state.etapa == 'envio':
         metodo = f"[{item.get('metodo', 'Manual')}]" if item['nf'] != "MANUAL" else ""
         texto += f"{icone} NF:{item['nf']} {metodo} - CHAVE: {item['chave']}\n"
     
-    st.text_area("Resumo das Notas:", value=texto, height=200, disabled=True)
-    if st.session_state.dados['obs']: st.info(f"Obs: {st.session_state.dados['obs']}")
-
+    st.text_area("Resumo:", value=texto, height=200, disabled=True)
     if st.button("✈️ ENVIAR AGORA", type="primary"):
-        d = st.session_state.dados
         with st.spinner("Enviando..."):
-            ok = enviar_email_com_anexos(texto, d, st.session_state.notas_processadas)
-            if ok:
+            if enviar_email_com_anexos(texto, st.session_state.dados, st.session_state.notas_processadas):
                 st.balloons()
-                st.success("Enviado com sucesso! Boa viagem.")
+                st.success("Sucesso! E-mail enviado.")
                 st.session_state.notas_processadas = []
                 st.session_state.etapa = 'dados'
                 if st.button("Nova Viagem"): st.rerun()
-            else: pass
-    
+            else: st.error("Erro no envio do e-mail.")
     if st.button("⬅️ Voltar"):
         st.session_state.etapa = 'fotos'
         st.rerun()
