@@ -57,7 +57,7 @@ def validar_chave(chave):
 def ler_com_ia_gemini(img):
     try:
         # ATUALIZADO: Usando o modelo que sua conta tem acesso
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel('gemini-flash-latest')
         
         # Desativa bloqueios para ler documentos
         safety_settings = [
